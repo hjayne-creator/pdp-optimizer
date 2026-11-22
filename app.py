@@ -59,6 +59,10 @@ When a Customer Style Guide is provided in the user message:
 - If the style guide conflicts with the default visible-copy structure above, follow the style guide and note the deviation in the Research Summary.
 - Do not invent style rules that are not in the guide. If no style guide is provided, use clear UK/EN professional ecommerce tone.
 
+### Copy retention (writing phase)
+
+Follow the skill **Copy retention** rules: prefer retaining accurate, useful subject-page copy; light-edit only where needed; expand only for validated gaps — do not wholesale-rewrite good copy.
+
 Visible WYSIWYG copy structure (omit a section only when it does not apply; style guide may override):
 1. Product identity
 2. Key specifications
@@ -440,7 +444,7 @@ Required work:
 2. Use WebSearch to find and review exact-match competitor PDPs when available.
 3. Separately WebSearch alternative products for a possible **How it compares** table. Include that table in the Final WYSIWYG PDP Copy and HTML only if at least three suitable alternatives have verified, comparable specs; otherwise omit it and say why in the Research Summary.
 4. Produce the full deliverable set (Issues, Research Summary, Gap Validation Table, Excluded Content Gaps, WYSIWYG copy, HTML, JSON-LD, Sources).
-5. During the PDP writing phase (sections 5 and 6), actively apply the Customer Style Guide rules above.
+5. During the PDP writing phase (sections 5 and 6), actively apply the Customer Style Guide rules above and the Copy retention rules (retain / light-edit / expand — do not wholesale-rewrite good copy).
 
 Buyer-focused, neutral, no unsupported marketing claims. Prefer metric units where applicable unless the style guide says otherwise.
 """
