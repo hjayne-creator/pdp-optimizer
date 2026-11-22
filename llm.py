@@ -353,6 +353,61 @@ def _generate_anthropic(
     }
 
 
+def _extract_gemini_text(response: Any) -> str:
+    """Pull visible text parts from a Gemini response, skipping thought-only parts."""
+    texts: list[str] = []
+    for candidate in getattr(response, "candidates", None) or []:
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", None) or []:
+            if getattr(part, "thought", False):
+                continue
+            text = getattr(part, "text", None)
+            if text:
+                texts.append(text)
+    if texts:
+        return "\n".join(texts).strip()
+    try:
+        return (getattr(response, "text", None) or "").strip()
+    except Exception:
+        return ""
+
+
+def _gemini_empty_detail(response: Any) -> str:
+    """Build a short diagnostic when Gemini returns no visible text."""
+    details: list[str] = []
+    prompt_feedback = getattr(response, "prompt_feedback", None)
+    if prompt_feedback is not None:
+        block = getattr(prompt_feedback, "block_reason", None)
+        if block:
+            details.append(f"prompt_block={block}")
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        details.append("no candidates")
+    for idx, candidate in enumerate(candidates):
+        finish = getattr(candidate, "finish_reason", None)
+        if finish:
+            details.append(f"candidate[{idx}].finish_reason={finish}")
+        finish_message = getattr(candidate, "finish_message", None)
+        if finish_message:
+            details.append(f"candidate[{idx}].finish_message={finish_message}")
+        grounding = getattr(candidate, "grounding_metadata", None)
+        if grounding is not None:
+            queries = getattr(grounding, "web_search_queries", None) or []
+            chunks = getattr(grounding, "grounding_chunks", None) or []
+            if queries:
+                details.append(f"search_queries={len(queries)}")
+            details.append(f"grounding_chunks={len(chunks)}")
+    meta = getattr(response, "usage_metadata", None)
+    if meta is not None:
+        details.append(
+            "tokens="
+            f"prompt:{getattr(meta, 'prompt_token_count', 0) or 0}/"
+            f"candidates:{getattr(meta, 'candidates_token_count', 0) or 0}/"
+            f"thoughts:{getattr(meta, 'thoughts_token_count', 0) or 0}"
+        )
+    return "; ".join(details) if details else "no additional diagnostics"
+
+
 def _generate_google(
     model: str,
     api_key: str,
@@ -364,28 +419,40 @@ def _generate_google(
     from google.genai import types
 
     client = genai.Client(api_key=api_key)
-    config_kwargs: dict[str, Any] = {
-        "system_instruction": system_prompt,
-        "temperature": temperature,
-        "tools": [types.Tool(google_search=types.GoogleSearch())],
-    }
-    try:
-        response = client.models.generate_content(
-            model=model,
-            contents=user_prompt,
-            config=types.GenerateContentConfig(**config_kwargs),
-        )
-    except Exception:
-        config_kwargs.pop("tools", None)
-        response = client.models.generate_content(
+
+    def _call(*, use_search: bool) -> Any:
+        config_kwargs: dict[str, Any] = {
+            "system_instruction": system_prompt,
+            "temperature": temperature,
+        }
+        if use_search:
+            config_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
+        return client.models.generate_content(
             model=model,
             contents=user_prompt,
             config=types.GenerateContentConfig(**config_kwargs),
         )
 
-    content = (response.text or "").strip()
+    response = None
+    content = ""
+    # Search grounding can "succeed" with finish_reason=STOP and empty text.
+    # Retry without tools when that happens (common on hosted Streamlit).
+    try:
+        response = _call(use_search=True)
+        content = _extract_gemini_text(response)
+    except Exception:
+        response = None
+        content = ""
+
     if not content:
-        raise RuntimeError("Gemini returned an empty response.")
+        response = _call(use_search=False)
+        content = _extract_gemini_text(response)
+
+    if not content:
+        raise RuntimeError(
+            "Gemini returned an empty response. "
+            f"Diagnostics: {_gemini_empty_detail(response)}"
+        )
 
     meta = getattr(response, "usage_metadata", None)
     input_tokens = int(getattr(meta, "prompt_token_count", 0) or 0) if meta else 0
