@@ -1,3 +1,4 @@
+from io import BytesIO
 from pathlib import Path
 
 import streamlit as st
@@ -49,7 +50,16 @@ Research alternative products separately from exact-match competitor PDPs (skill
   - that How it compares was included (list the alternatives), or
   - that it was omitted and why (e.g. fewer than three verified alternatives).
 
-Visible WYSIWYG copy structure (omit a section only when it does not apply):
+### Customer style guide (writing phase)
+
+When a Customer Style Guide is provided in the user message:
+
+- Read it before drafting and treat it as authoritative for voice, tone, terminology, structure, section naming, and presentation constraints.
+- Apply it throughout **Final WYSIWYG PDP Copy** and **HTML PDP Copy**.
+- If the style guide conflicts with the default visible-copy structure above, follow the style guide and note the deviation in the Research Summary.
+- Do not invent style rules that are not in the guide. If no style guide is provided, use clear UK/EN professional ecommerce tone.
+
+Visible WYSIWYG copy structure (omit a section only when it does not apply; style guide may override):
 1. Product identity
 2. Key specifications
 3. Overview
@@ -67,6 +77,52 @@ For section 7: wrap the JSON-LD in a single ```json fenced block.
 
 Tooling note: Screaming Frog / browser connectors may be unavailable in this app. Use the best research available to you and disclose material extraction or research limitations in the Research Summary.
 """
+
+
+def read_style_guide(uploaded_file) -> tuple[str, str, bool]:
+    """Return (content, status_note, ok) from an uploaded style guide file."""
+    name = uploaded_file.name
+    suffix = Path(name).suffix.lower()
+    raw = uploaded_file.read()
+
+    try:
+        if suffix in {".txt", ".md"}:
+            content = raw.decode("utf-8").strip()
+        elif suffix == ".docx":
+            from docx import Document
+
+            doc = Document(BytesIO(raw))
+            parts: list[str] = []
+            for para in doc.paragraphs:
+                text = para.text.strip()
+                if text:
+                    parts.append(text)
+            for table in doc.tables:
+                for row in table.rows:
+                    cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    if cells:
+                        parts.append(" | ".join(cells))
+            content = "\n".join(parts).strip()
+        else:
+            return (
+                "Unsupported style guide format. Default to clear UK/EN professional ecommerce tone.",
+                f"{name} (unsupported type)",
+                False,
+            )
+    except Exception as exc:
+        return (
+            "Could not parse uploaded style guide. Default to clear UK/EN professional ecommerce tone.",
+            f"{name} (parse failed: {exc})",
+            False,
+        )
+
+    if not content:
+        return (
+            "Uploaded style guide was empty after parsing. Default to clear UK/EN professional ecommerce tone.",
+            f"{name} (empty)",
+            False,
+        )
+    return content, name, True
 
 
 def load_system_prompt() -> str:
@@ -344,30 +400,47 @@ def page_new_run() -> None:
             st.error("Please provide a valid Subject PDP URL.")
             return
 
-        style_guide_content = "No custom style guide uploaded. Default to clear UK/EN professional ecommerce tone."
-        style_guide_note = "None"
+        style_guide_ok = False
         if style_guide_file is not None:
-            style_guide_note = style_guide_file.name
-            try:
-                style_guide_content = style_guide_file.read().decode("utf-8")
-            except Exception:
-                style_guide_content = "Could not parse uploaded file directly, treating text as generic context."
+            style_guide_content, style_guide_note, style_guide_ok = read_style_guide(style_guide_file)
+            if style_guide_ok:
+                st.caption(f"Style guide loaded: `{style_guide_note}` ({len(style_guide_content):,} characters).")
+            else:
+                st.warning(f"Style guide not applied: {style_guide_note}")
+        else:
+            style_guide_content = (
+                "No custom style guide uploaded. Default to clear UK/EN professional ecommerce tone."
+            )
+            style_guide_note = "None"
+
+        style_guide_writing_rule = (
+            "Apply the Customer Style Guide / Brand Rules below as the authority for voice, tone, "
+            "terminology, structure, and presentation when writing Final WYSIWYG PDP Copy and HTML PDP Copy. "
+            "If the guide conflicts with the default section list, follow the guide and note the deviation "
+            "in the Research Summary."
+            if style_guide_ok
+            else "No usable style guide was provided; use clear UK/EN professional ecommerce tone."
+        )
 
         user_prompt = f"""
-Please optimize the following Subject PDP URL using the provided Customer Style Guide context and the Ecommerce PDP Optimizer skill rules.
+Please optimize the following Subject PDP URL using the Ecommerce PDP Optimizer skill rules.
 
 Subject PDP URL: {subject_url}
 
 Customer Style Guide / Brand Rules:
 {style_guide_content}
 
+Style guide writing instruction:
+{style_guide_writing_rule}
+
 Required work:
 1. Research and verify the subject product (manufacturer sources preferred; disclose limits).
 2. Review exact-match competitor PDPs when available.
 3. Separately research alternative products for a possible **How it compares** table. Include that table in the Final WYSIWYG PDP Copy and HTML only if at least three suitable alternatives have verified, comparable specs; otherwise omit it and say why in the Research Summary.
 4. Produce the full deliverable set (Issues, Research Summary, Gap Validation Table, Excluded Content Gaps, WYSIWYG copy, HTML, JSON-LD, Sources).
+5. During the PDP writing phase (sections 5 and 6), actively apply the Customer Style Guide rules above.
 
-Tone: UK English, metric standards where applicable, buyer-focused, neutral — no unsupported marketing claims.
+Buyer-focused, neutral, no unsupported marketing claims. Prefer metric units where applicable unless the style guide says otherwise.
 """
         api_key = keys.get(PROVIDER_KEY_MAP[provider], "")
         model_label = selected["label"] if selected else model
