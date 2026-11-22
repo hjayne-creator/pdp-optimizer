@@ -1,0 +1,14 @@
+# Local secrets and saved runs
+data/api_keys.json
+data/reports/
+
+# Python / env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.env
+.DS_Store
+
+# Streamlit
+.streamlit/secrets.toml
