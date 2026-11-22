@@ -239,6 +239,38 @@ def _generate_openai(
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key)
+
+    # Prefer Responses API with web_search so the model can research live pages.
+    try:
+        response = client.responses.create(
+            model=model,
+            instructions=system_prompt,
+            input=user_prompt,
+            tools=[{"type": "web_search"}],
+            include=["web_search_call.action.sources"],
+        )
+        content = (getattr(response, "output_text", None) or "").strip()
+        if not content:
+            raise RuntimeError("OpenAI Responses API returned an empty response.")
+
+        usage = getattr(response, "usage", None)
+        input_tokens = int(getattr(usage, "input_tokens", 0) or 0) if usage else 0
+        output_tokens = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
+        total_tokens = int(getattr(usage, "total_tokens", 0) or (input_tokens + output_tokens)) if usage else 0
+        cached = 0
+        details = getattr(usage, "input_tokens_details", None) if usage else None
+        if details is not None:
+            cached = int(getattr(details, "cached_tokens", 0) or 0)
+        return content, {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cached_input_tokens": cached,
+        }
+    except Exception:
+        # Fall back to chat completions if Responses/web_search is unavailable.
+        pass
+
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": [
@@ -280,13 +312,26 @@ def _generate_anthropic(
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model=model,
-        max_tokens=8192,
-        temperature=temperature,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "max_tokens": 8192,
+        "temperature": temperature,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_prompt}],
+        "tools": [
+            {
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 12,
+            }
+        ],
+    }
+    try:
+        response = client.messages.create(**kwargs)
+    except Exception:
+        kwargs.pop("tools", None)
+        response = client.messages.create(**kwargs)
+
     parts = []
     for block in response.content:
         text = getattr(block, "text", None)
@@ -319,14 +364,25 @@ def _generate_google(
     from google.genai import types
 
     client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=model,
-        contents=user_prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=temperature,
-        ),
-    )
+    config_kwargs: dict[str, Any] = {
+        "system_instruction": system_prompt,
+        "temperature": temperature,
+        "tools": [types.Tool(google_search=types.GoogleSearch())],
+    }
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(**config_kwargs),
+        )
+    except Exception:
+        config_kwargs.pop("tools", None)
+        response = client.models.generate_content(
+            model=model,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(**config_kwargs),
+        )
+
     content = (response.text or "").strip()
     if not content:
         raise RuntimeError("Gemini returned an empty response.")

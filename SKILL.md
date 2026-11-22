@@ -1,7 +1,6 @@
 ---
 name: pdp-optimizer
 description: Research, validate, and improve an ecommerce product detail page (PDP) using the subject page, official manufacturer documentation, a customer style guide, and competitor research. Use when asked to audit, rewrite, enrich, compare, or create PDP copy, HTML, or Product JSON-LD for an ecommerce product.
-connectors: ScreamingFrog
 ---
 
 # Ecommerce PDP Optimizer
@@ -17,7 +16,7 @@ Collect these inputs before beginning. Ask for anything that is missing.
 
 Official manufacturer sources are research sources, not an input requirement. Locate and use them when available.
 
-Before crawling, read the site blacklist from the designated local directory, when present. Do not visit, crawl, extract, or cite a blacklisted domain or any of its subdomains. The blacklist overrides every research fallback below.
+Before researching, read the site blacklist from the designated local directory, when present. Do not visit, fetch, extract, or cite a blacklisted domain or any of its subdomains. The blacklist overrides every research fallback below.
 
 ## Source authority and claim rules
 
@@ -35,28 +34,23 @@ Apply these rules to every claim in the final output.
 
 ### 1. Extract the subject page
 
-Use a JavaScript-capable browser or crawler when available. Many PDPs load specification tables, tabs, images, and structured data after rendering.
+Use **WebSearch** (and URL/page retrieval when available through the same provider tooling) as the primary research method. Many PDPs load specification tables, tabs, images, and structured data dynamically—search for the exact product page, manufacturer documentation, and corroborating sources rather than relying on memory alone.
 
 Preferred order:
 
-1. Crawl with Screaming Frog using JavaScript rendering, when the Screaming Frog MCP connector is available.
-2. Use an available browser to render and inspect the page.
-3. Fall back to WebFetch for static pages.
+1. **WebSearch** for the subject product URL, brand + model/MPN, and official documentation.
+2. Open or retrieve the subject PDP and related pages found via search.
+3. Cross-check manufacturer and competitor sources with additional WebSearch queries.
 
-Use the same preference for the subject page, manufacturer sources, and competitor PDPs. If browser rendering is unavailable and extracted content appears incomplete, disclose that limitation in the Research Summary.
+Use the same approach for the subject page, manufacturer sources, competitor PDPs, and alternative products. If search or page retrieval appears incomplete, disclose that limitation in the Research Summary.
 
-#### Screaming Frog procedure
+#### WebSearch procedure
 
-Follow these steps in order; they avoid known failure points.
-
-1. **Crawl in list mode.** Use `sf_crawl_from_list` with one URL or with the subject page and competitor PDPs together. Poll `sf_crawl_progress` until `crawlRunning` is `false` before reading results.
-2. **Save files only to existing folders.** Writes to a missing subfolder fail. Call `sf_create_directory` first (for example, `pdp/`) or write to the base directory.
-3. **Extract page content.** Call `sf_url_content` with `page_content_type: MARKDOWN` and a `file_path`, then read the file with `sf_read_text_file`. Inline output is capped at 8,192 characters.
-4. **Extract head elements.** `sf_url_info` returns the title, meta description, H1, meta robots, canonical, status, and indexability. Write the result to a file, then read it.
-5. **Extract live JSON-LD.** Export the custom extractor with `sf_export_seo_element_urls` using `seo_element_name: Custom Extraction` and `filter_name: LDJSON`, then call `sf_task_status`. The result's sample row contains each JSON-LD block in full. The **Structured Data → JSON-LD URLs** export lists types and validation counts only; use it for errors and warnings.
-6. **Do not page through raw HTML** with `sf_read_text_file`. Minified pages may place the whole body on one line, exceeding the 100 KB response limit even when only a few lines are requested.
-7. **Do not retry disabled Node.js scripts.** `sf_run_node_script` works only when the SEO Spider Node.js runtime is enabled. If it reports disabled, continue with steps 3–5.
-8. **Do not bypass bot protection.** If a site shows a Cloudflare challenge (HTTP 403 or “Just a moment…”), rely on the Screaming Frog crawl and record the limitation.
+1. Search the exact subject PDP URL and extract available product content from the page or indexed snippets.
+2. Search `brand + manufacturer part number/model` for official datasheets, manuals, and manufacturer product pages.
+3. Search for exact-match competitor PDPs and, separately, for alternative products for **How it compares**.
+4. Prefer organic product and manufacturer results; exclude sponsored placements and shopping ads where distinguishable.
+5. Do not bypass bot protection. If a page cannot be retrieved, record the limitation and continue with verified sources you can access.
 
 Catalog the following subject-page content:
 
@@ -85,7 +79,7 @@ Confirm the exact model before trusting any source. Manufacturers often reuse mo
 
 ### 3. Find valid competitor PDPs
 
-Search using the brand/manufacturer name plus the exact manufacturer part number or model number. Review organic results only; exclude sponsored placements and shopping ads. Apply the local site blacklist before opening any result.
+Use WebSearch with the brand/manufacturer name plus the exact manufacturer part number or model number. Review organic results only; exclude sponsored placements and shopping ads. Apply the local site blacklist before opening any result.
 
 These competitor PDPs are for the same subject product. Aim to review 3–6 valid exact-match PDPs. If fewer than three exist after a reasonable search, stop and report the number found. Do not review more than six unless the user specifically requests broader research.
 

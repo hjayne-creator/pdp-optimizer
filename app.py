@@ -75,7 +75,9 @@ For section 5: buyer-facing PDP copy only as clean markdown — no meta commenta
 For section 6: wrap the HTML in a single ```html fenced block.
 For section 7: wrap the JSON-LD in a single ```json fenced block.
 
-Tooling note: Screaming Frog / browser connectors may be unavailable in this app. Use the best research available to you and disclose material extraction or research limitations in the Research Summary.
+### Research tooling
+
+Use **WebSearch** as the primary research method for the subject PDP, manufacturer documentation, competitor PDPs, and alternative products. Do not invent page content from memory when search is available. Disclose material search or retrieval limitations in the Research Summary.
 """
 
 
@@ -434,9 +436,9 @@ Style guide writing instruction:
 {style_guide_writing_rule}
 
 Required work:
-1. Research and verify the subject product (manufacturer sources preferred; disclose limits).
-2. Review exact-match competitor PDPs when available.
-3. Separately research alternative products for a possible **How it compares** table. Include that table in the Final WYSIWYG PDP Copy and HTML only if at least three suitable alternatives have verified, comparable specs; otherwise omit it and say why in the Research Summary.
+1. Use WebSearch to research and verify the subject product (manufacturer sources preferred; disclose limits).
+2. Use WebSearch to find and review exact-match competitor PDPs when available.
+3. Separately WebSearch alternative products for a possible **How it compares** table. Include that table in the Final WYSIWYG PDP Copy and HTML only if at least three suitable alternatives have verified, comparable specs; otherwise omit it and say why in the Research Summary.
 4. Produce the full deliverable set (Issues, Research Summary, Gap Validation Table, Excluded Content Gaps, WYSIWYG copy, HTML, JSON-LD, Sources).
 5. During the PDP writing phase (sections 5 and 6), actively apply the Customer Style Guide rules above.
 
