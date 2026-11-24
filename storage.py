@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -16,14 +17,63 @@ REPORTS_DIR = DATA_DIR / "reports"
 
 KEY_FIELDS = ("openai", "anthropic", "google")
 
+# Env var names checked in order for each provider.
+ENV_KEY_MAP: dict[str, tuple[str, ...]] = {
+    "openai": ("OPENAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_API_KEY",),
+    "google": ("GOOGLE_API_KEY", "GOOGLE_AI_API_KEY", "GEMINI_API_KEY"),
+}
+
 
 def _ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def load_api_keys() -> dict[str, str]:
-    _ensure_dirs()
+def _from_env(field: str) -> str:
+    for name in ENV_KEY_MAP.get(field, ()):
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _from_secrets(field: str) -> str:
+    """Read from Streamlit secrets when available (e.g. Streamlit Community Cloud)."""
+    try:
+        import streamlit as st
+
+        secrets = st.secrets
+    except Exception:
+        return ""
+
+    for name in ENV_KEY_MAP.get(field, ()):
+        try:
+            value = str(secrets.get(name, "") or "").strip()
+        except Exception:
+            value = ""
+        if value:
+            return value
+
+    try:
+        nested = secrets.get("api_keys", {})
+        value = str(nested.get(field, "") or "").strip()
+        if value:
+            return value
+    except Exception:
+        pass
+
+    try:
+        value = str(secrets.get(field, "") or "").strip()
+        if value:
+            return value
+    except Exception:
+        pass
+
+    return ""
+
+
+def _from_file() -> dict[str, str]:
     if not KEYS_PATH.exists():
         return {k: "" for k in KEY_FIELDS}
     try:
@@ -31,6 +81,16 @@ def load_api_keys() -> dict[str, str]:
     except (json.JSONDecodeError, OSError):
         return {k: "" for k in KEY_FIELDS}
     return {k: str(raw.get(k, "") or "") for k in KEY_FIELDS}
+
+
+def load_api_keys() -> dict[str, str]:
+    """Load keys with precedence: local file → env vars → Streamlit secrets."""
+    _ensure_dirs()
+    file_keys = _from_file()
+    return {
+        k: (file_keys.get(k) or _from_env(k) or _from_secrets(k) or "")
+        for k in KEY_FIELDS
+    }
 
 
 def save_api_keys(keys: dict[str, str]) -> None:

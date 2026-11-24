@@ -309,7 +309,11 @@ def render_report_tabs(full_output: str, key_prefix: str = "live") -> None:
 
 def page_api_keys() -> None:
     st.header("API Keys")
-    st.caption("Keys are saved locally in `data/api_keys.json` (gitignored). They stay on this machine between runs.")
+    st.caption(
+        "Precedence: values saved here (local file) → environment variables → Streamlit secrets. "
+        "For a shared deploy, set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and "
+        "`GOOGLE_API_KEY` (or `GEMINI_API_KEY`) in the host env / Streamlit secrets so every teammate gets them."
+    )
 
     saved = load_api_keys()
     with st.form("api_keys_form"):
@@ -317,19 +321,19 @@ def page_api_keys() -> None:
             "OpenAI API Key",
             value=saved.get("openai", ""),
             type="password",
-            help="Used for GPT models.",
+            help="Used for GPT models. Env: OPENAI_API_KEY",
         )
         anthropic_key = st.text_input(
             "Anthropic API Key",
             value=saved.get("anthropic", ""),
             type="password",
-            help="Used for Claude models.",
+            help="Used for Claude models. Env: ANTHROPIC_API_KEY",
         )
         google_key = st.text_input(
             "Google AI API Key",
             value=saved.get("google", ""),
             type="password",
-            help="Used for Gemini models (Google AI Studio).",
+            help="Used for Gemini models. Env: GOOGLE_API_KEY or GEMINI_API_KEY",
         )
         submitted = st.form_submit_button("Save keys", type="primary")
 
@@ -339,7 +343,7 @@ def page_api_keys() -> None:
             "anthropic": anthropic_key,
             "google": google_key,
         })
-        st.success("API keys saved.")
+        st.success("API keys saved locally for this machine.")
 
     status = load_api_keys()
     cols = st.columns(3)
@@ -350,7 +354,7 @@ def page_api_keys() -> None:
     ]):
         with col:
             if status.get(field):
-                st.success(f"{label}: saved")
+                st.success(f"{label}: configured")
             else:
                 st.warning(f"{label}: missing")
 
