@@ -307,15 +307,16 @@ def _generate_anthropic(
     api_key: str,
     system_prompt: str,
     user_prompt: str,
-    temperature: float,
+    _temperature: float,
 ) -> tuple[str, dict[str, int]]:
+    """Call Anthropic Messages API. Sampling params are intentionally unused:
+    SDK 1+/API 2026-10-21 removed temperature/top_p/top_k from create()."""
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key)
     kwargs: dict[str, Any] = {
         "model": model,
         "max_tokens": 8192,
-        "temperature": temperature,
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_prompt}],
         "tools": [
