@@ -302,6 +302,15 @@ def _generate_openai(
     }
 
 
+def _anthropic_text_blocks(content: Any) -> list[str]:
+    parts: list[str] = []
+    for block in content or []:
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(text)
+    return parts
+
+
 def _generate_anthropic(
     model: str,
     api_key: str,
@@ -310,42 +319,98 @@ def _generate_anthropic(
     _temperature: float,
 ) -> tuple[str, dict[str, int]]:
     """Call Anthropic Messages API. Sampling params are intentionally unused:
-    SDK 1+/API 2026-10-21 removed temperature/top_p/top_k from create()."""
+    SDK 1+/API 2026-10-21 removed temperature/top_p/top_k from create().
+
+    Web search runs in a server-side loop that can return stop_reason=pause_turn
+    before the final report is written; continue those turns until completion.
+    """
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key)
-    kwargs: dict[str, Any] = {
-        "model": model,
-        "max_tokens": 8192,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": user_prompt}],
-        "tools": [
-            {
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": 12,
-            }
-        ],
-    }
-    try:
-        response = client.messages.create(**kwargs)
-    except Exception:
-        kwargs.pop("tools", None)
-        response = client.messages.create(**kwargs)
+    tools: list[dict[str, Any]] | None = [
+        {
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "max_uses": 12,
+        }
+    ]
+    messages: list[dict[str, Any]] = [{"role": "user", "content": user_prompt}]
+    text_parts: list[str] = []
+    input_tokens = 0
+    output_tokens = 0
+    cached = 0
+    max_rounds = 10
+    used_tools = True
 
-    parts = []
-    for block in response.content:
-        text = getattr(block, "text", None)
-        if text:
-            parts.append(text)
-    content = "\n".join(parts).strip()
+    for round_idx in range(max_rounds):
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": 16384,
+            "system": system_prompt,
+            "messages": messages,
+        }
+        if tools is not None:
+            kwargs["tools"] = tools
+
+        try:
+            response = client.messages.create(**kwargs)
+        except Exception:
+            if tools is None or round_idx > 0:
+                raise
+            # First-call tool setup can fail on some accounts/SDK combos.
+            tools = None
+            used_tools = False
+            response = client.messages.create(
+                model=model,
+                max_tokens=16384,
+                system=system_prompt,
+                messages=messages,
+            )
+
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            input_tokens += int(getattr(usage, "input_tokens", 0) or 0)
+            output_tokens += int(getattr(usage, "output_tokens", 0) or 0)
+            cached += int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+
+        text_parts.extend(_anthropic_text_blocks(response.content))
+        stop_reason = getattr(response, "stop_reason", None)
+
+        if stop_reason == "pause_turn" and used_tools:
+            # Server-tool loop paused; send assistant content back unchanged.
+            messages.append({"role": "assistant", "content": response.content})
+            continue
+
+        if stop_reason == "max_tokens":
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Continue exactly where you left off. "
+                        "Finish the full deliverable with all required sections."
+                    ),
+                }
+            )
+            continue
+
+        break
+    else:
+        raise RuntimeError(
+            "Anthropic hit the continuation limit before finishing the report. "
+            "Try again, or temporarily reduce web-search scope."
+        )
+
+    content = "\n".join(text_parts).strip()
     if not content:
         raise RuntimeError("Anthropic returned an empty response.")
+    if len(content) < 500 and "##" not in content:
+        raise RuntimeError(
+            "Anthropic stopped before producing a full report "
+            f"(stop_reason={getattr(response, 'stop_reason', None)!r}, "
+            f"{len(content)} chars). Try running again."
+        )
 
-    usage = response.usage
-    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
-    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
-    cached = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
     return content, {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
