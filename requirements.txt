@@ -3,3 +3,5 @@ openai>=1.40.0
 anthropic>=0.40.0  # 1.x/2.x: do not pass temperature to messages.create
 google-genai>=1.0.0
 python-docx>=1.1.0
+psycopg2-binary>=2.9.6
+sqlalchemy>=2.0.0
