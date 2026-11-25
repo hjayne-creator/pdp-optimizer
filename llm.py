@@ -10,8 +10,43 @@ from typing import Any
 # - Anthropic: https://platform.claude.com/docs/en/models/overview
 # - Google: https://aistudio.google.com/docs/pricing
 # - DeepSeek: https://api-docs.deepseek.com/quick_start/pricing/
+# Preferred New Optimization defaults when the matching API key is configured.
+DEFAULT_PROVIDER = "Anthropic"
+DEFAULT_MODEL = "claude-sonnet-5-5"
+
 MODELS: dict[str, list[dict[str, Any]]] = {
+    # Anthropic first so it is the default provider when its key is present.
+    "Anthropic": [
+        {
+            "id": "claude-sonnet-5-5",
+            "label": "Claude Sonnet 5.5",
+            "input_per_mtok": 2.00,
+            "output_per_mtok": 10.00,
+            "notes": "Default model; base token pricing",
+        },
+        {
+            "id": "claude-opus-5-5",
+            "label": "Claude Opus 5.5",
+            "input_per_mtok": 4.00,
+            "output_per_mtok": 20.00,
+            "notes": "Base token pricing",
+        },
+        {
+            "id": "claude-haiku-5-5",
+            "label": "Claude Haiku 5.5",
+            "input_per_mtok": 0.10,
+            "output_per_mtok": 0.50,
+            "notes": "From $0.10 / $0.50 per MTok (tiered)",
+        },
+    ],
     "OpenAI": [
+        {
+            "id": "gpt-6-astra",
+            "label": "GPT-6 Astra",
+            "input_per_mtok": 10.00,
+            "output_per_mtok": 50.00,
+            "notes": "Standard short-context (≤272K)",
+        },
         {
             "id": "gpt-6.1-sol",
             "label": "GPT-6.1 Sol",
@@ -55,36 +90,33 @@ MODELS: dict[str, list[dict[str, Any]]] = {
             "notes": "Standard short-context (≤272K)",
         },
     ],
-    "Anthropic": [
-        {
-            "id": "claude-opus-5-5",
-            "label": "Claude Opus 5.5",
-            "input_per_mtok": 4.00,
-            "output_per_mtok": 20.00,
-            "notes": "Base token pricing",
-        },
-        {
-            "id": "claude-sonnet-5-5",
-            "label": "Claude Sonnet 5.5",
-            "input_per_mtok": 2.00,
-            "output_per_mtok": 10.00,
-            "notes": "Base token pricing",
-        },
-        {
-            "id": "claude-haiku-5-5",
-            "label": "Claude Haiku 5.5",
-            "input_per_mtok": 0.10,
-            "output_per_mtok": 0.50,
-            "notes": "From $0.10 / $0.50 per MTok (tiered)",
-        },
-    ],
     "Google": [
         {
-            "id": "gemini-3.5-flash-lite",
-            "label": "Gemini 3.5 Flash-Lite",
-            "input_per_mtok": 0.30,
-            "output_per_mtok": 2.50,
-            "notes": "Paid tier (text/image/video/audio input)",
+            "id": "gemini-4-carbon",
+            "label": "Gemini 4 Carbon",
+            "input_per_mtok": 2.00,
+            "output_per_mtok": 10.00,
+            "notes": (
+                "Promo through Nov 30, 2026; then $4.00 / $20.00; "
+                "output includes thinking tokens"
+            ),
+        },
+        {
+            "id": "gemini-4-argon",
+            "label": "Gemini 4 Argon",
+            "input_per_mtok": 2.00,
+            "output_per_mtok": 10.00,
+            "notes": (
+                "Promo through Nov 30, 2026; then $4.00 / $20.00; "
+                "output includes thinking tokens; usually fewer tokens/turn than Carbon"
+            ),
+        },
+        {
+            "id": "gemini-4-hydrogen",
+            "label": "Gemini 4 Hydrogen",
+            "input_per_mtok": 1.50,
+            "output_per_mtok": 7.50,
+            "notes": "Paid tier; output includes thinking tokens",
         },
         {
             "id": "gemini-3.8-flash",
@@ -94,11 +126,11 @@ MODELS: dict[str, list[dict[str, Any]]] = {
             "notes": "Promo through Dec 31, 2026; then $1.50 / $7.50",
         },
         {
-            "id": "gemini-4-hydrogen",
-            "label": "Gemini 4 Hydrogen",
-            "input_per_mtok": 1.50,
-            "output_per_mtok": 7.50,
-            "notes": "Paid tier; output includes thinking tokens",
+            "id": "gemini-3.5-flash-lite",
+            "label": "Gemini 3.5 Flash-Lite",
+            "input_per_mtok": 0.30,
+            "output_per_mtok": 2.50,
+            "notes": "Paid tier (text/image/video/audio input)",
         },
     ],
     "DeepSeek": [
@@ -566,12 +598,17 @@ def _deepseek_usage_dict(usage: Any, *, prompt_style: bool = False) -> dict[str,
         input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
         output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
         details = getattr(usage, "prompt_tokens_details", None)
+        cached = int(getattr(details, "cached_tokens", 0) or 0) if details is not None else 0
+        if not cached:
+            cached = int(getattr(usage, "prompt_cache_hit_tokens", 0) or 0)
     else:
         input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
         output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
         details = getattr(usage, "input_tokens_details", None)
+        cached = int(getattr(details, "cached_tokens", 0) or 0) if details is not None else 0
+        if not cached:
+            cached = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
     total_tokens = int(getattr(usage, "total_tokens", 0) or (input_tokens + output_tokens))
-    cached = int(getattr(details, "cached_tokens", 0) or 0) if details is not None else 0
     return {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
@@ -580,14 +617,144 @@ def _deepseek_usage_dict(usage: Any, *, prompt_style: bool = False) -> dict[str,
     }
 
 
+def _deepseek_add_usage(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
+    return {
+        "input_tokens": int(a.get("input_tokens", 0)) + int(b.get("input_tokens", 0)),
+        "output_tokens": int(a.get("output_tokens", 0)) + int(b.get("output_tokens", 0)),
+        "total_tokens": int(a.get("total_tokens", 0)) + int(b.get("total_tokens", 0)),
+        "cached_input_tokens": int(a.get("cached_input_tokens", 0))
+        + int(b.get("cached_input_tokens", 0)),
+    }
+
+
+DEEPSEEK_TOOL_PREAMBLE = """
+## DeepSeek runtime tooling (overrides skill tool names)
+
+In this API request you have server-side tools:
+- `deepseek_read_url` — fetch URLs present in the latest user message
+- `deepseek_web_search` — web search and deep thinking search
+
+Whenever the skill mentions WebSearch, use these server tools instead. They run
+on the server inside this same turn. Do not ask permission. Do not reply with
+only a plan such as "I'll start researching". Call the tools now, then write the
+full markdown deliverable in this same response.
+""".strip()
+
+DEEPSEEK_FORCE_NUDGE = (
+    "You did not finish. Immediately use `deepseek_read_url` and/or "
+    "`deepseek_web_search` now, then produce the COMPLETE markdown deliverable "
+    "with all required sections (Issues to fix, Research Summary, Gap Validation "
+    "Table, Excluded Content Gaps, Final WYSIWYG PDP Copy, HTML PDP Copy, "
+    "JSON-LD Schema, Sources). Do not reply with a plan only."
+)
+
+DEEPSEEK_WEB_TOOLS: list[dict[str, Any]] = [
+    {"type": "deepseek_web_search"},
+    {"type": "deepseek_read_url"},
+]
+
+
 def _deepseek_report_incomplete(content: str) -> bool:
     """True when the model stopped before producing the expected PDP deliverable."""
     text = (content or "").strip()
-    if len(text) < 500:
+    if len(text) < 1500:
         return True
-    if "##" not in text and "Issues to fix" not in text:
+    lower = text.lower()
+    required_any = (
+        ("issues to fix" in lower or "page defects" in lower),
+        "research summary" in lower,
+        ("wysiwyg" in lower or "final wysiwyg" in lower),
+        ("html" in lower and ("pdp" in lower or "```html" in lower)),
+        ("json-ld" in lower or "jsonld" in lower or '"@type"' in lower),
+    )
+    # Require most core sections; allow one miss if the report is otherwise long.
+    if sum(1 for ok in required_any if ok) < 4:
         return True
     return False
+
+
+def _deepseek_research_useful(content: str) -> bool:
+    """True when a research-first turn has enough substance to expand from."""
+    text = (content or "").strip()
+    if len(text) < 500:
+        return False
+    lower = text.lower()
+    return ("##" in text or "research summary" in lower or "issues to fix" in lower)
+
+
+def _deepseek_looks_like_plan_stub(content: str) -> bool:
+    """Detect short 'I'll start researching…' replies that skipped tool use."""
+    text = (content or "").strip().lower()
+    if len(text) > 400:
+        return False
+    markers = (
+        "i'll start",
+        "i will start",
+        "let me start",
+        "i'll begin",
+        "i will begin",
+        "i'll research",
+        "i will research",
+        "i'll read",
+        "let me research",
+        "let me read",
+    )
+    return any(m in text for m in markers)
+
+
+def _deepseek_augment_system(system_prompt: str) -> str:
+    return f"{DEEPSEEK_TOOL_PREAMBLE}\n\n{system_prompt.strip()}"
+
+
+def _deepseek_message_to_dict(message: Any) -> dict[str, Any]:
+    """Serialize an OpenAI-style assistant message, preserving server_tool_calls."""
+    if hasattr(message, "model_dump"):
+        try:
+            dumped = message.model_dump(exclude_none=True)
+            if isinstance(dumped, dict) and dumped.get("role"):
+                # Keep extension fields DeepSeek needs for multi-turn URL context.
+                keep = {
+                    k: dumped[k]
+                    for k in (
+                        "role",
+                        "content",
+                        "reasoning_content",
+                        "server_tool_calls",
+                        "tool_calls",
+                    )
+                    if k in dumped and dumped[k] is not None
+                }
+                if keep.get("role") == "assistant":
+                    keep.setdefault("content", dumped.get("content") or "")
+                    return keep
+        except Exception:
+            pass
+
+    payload: dict[str, Any] = {
+        "role": "assistant",
+        "content": getattr(message, "content", None) or "",
+    }
+    reasoning = getattr(message, "reasoning_content", None)
+    if reasoning:
+        payload["reasoning_content"] = reasoning
+    extras = getattr(message, "model_extra", None) or {}
+    server_tool_calls = getattr(message, "server_tool_calls", None)
+    if server_tool_calls is None and isinstance(extras, dict):
+        server_tool_calls = extras.get("server_tool_calls")
+    if server_tool_calls is not None:
+        payload["server_tool_calls"] = server_tool_calls
+    return payload
+
+
+def _deepseek_server_tool_steps(message: Any) -> int:
+    extras = getattr(message, "model_extra", None) or {}
+    stc = getattr(message, "server_tool_calls", None)
+    if stc is None and isinstance(extras, dict):
+        stc = extras.get("server_tool_calls")
+    try:
+        return len(stc or [])
+    except Exception:
+        return 0
 
 
 def _generate_deepseek(
@@ -600,203 +767,280 @@ def _generate_deepseek(
     """Call DeepSeek with thinking + server web tools enabled.
 
     Temperature is unused: thinking mode ignores sampling params.
-    Deep thinking search can take a long time; we stream and use a long timeout
-    so keep-alives are handled instead of returning a premature stub reply.
+
+    DeepSeek sometimes returns a plan-only stub with thinking/tools skipped.
+    We use non-streaming calls, a DeepSeek tool preamble, and retry/continue
+    when that happens.
     """
     from openai import OpenAI
 
-    # Deep research with tools regularly exceeds default HTTP timeouts.
     client = OpenAI(
         api_key=api_key,
         base_url="https://api.deepseek.com",
         timeout=1200.0,
     )
-    # With thinking on, deepseek_web_search runs deep thinking search (search +
-    # open/find in pages). deepseek_read_url is ignored for user links while
-    # search is declared, but keep both so non-thinking retries can still read URLs.
-    tools = [
-        {"type": "deepseek_web_search"},
-        {"type": "deepseek_read_url"},
-    ]
-    continue_nudge = (
-        "\n\nContinue now and produce the COMPLETE deliverable in one response: "
-        "all required markdown sections (Issues to fix, Research Summary, Gap "
-        "Validation Table, Excluded Content Gaps, Final WYSIWYG PDP Copy, HTML "
-        "PDP Copy, JSON-LD Schema, Sources). Do not stop after announcing that "
-        "you will research — finish the full report."
+    system = _deepseek_augment_system(system_prompt)
+    task = (
+        user_prompt.strip()
+        + "\n\nExecute tools in this turn and produce the COMPLETE deliverable "
+        "with all required markdown sections. Do not stop after announcing that "
+        "you will research."
+    )
+    errors: list[str] = []
+
+    # Primary path: chat completions with thinking + web tools + stub recovery.
+    try:
+        content, usage = _deepseek_chat_with_recovery(
+            client,
+            model=model,
+            system_prompt=system,
+            user_prompt=task,
+        )
+        if not _deepseek_report_incomplete(content):
+            return content, usage
+        errors.append(f"chat recovery incomplete ({len(content)} chars)")
+    except Exception as exc:
+        errors.append(f"chat recovery: {exc}")
+
+    # Fallback: Anthropic Messages API on DeepSeek.
+    try:
+        content, usage = _deepseek_anthropic_messages(
+            api_key=api_key,
+            model=model,
+            system_prompt=system,
+            user_prompt=task,
+        )
+        if not _deepseek_report_incomplete(content):
+            return content, usage
+        errors.append(f"anthropic-messages incomplete ({len(content)} chars)")
+    except Exception as exc:
+        errors.append(f"anthropic-messages: {exc}")
+
+    raise RuntimeError(
+        "DeepSeek failed to generate a complete PDP report. " + " | ".join(errors)
     )
 
-    last_error: Exception | None = None
-    content = ""
-    usage_dict: dict[str, int] = {
+
+def _deepseek_chat_create(
+    client: Any,
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    max_tokens: int = 65536,
+) -> tuple[Any, str, dict[str, int]]:
+    """One non-streaming DeepSeek chat call; returns (message, content, usage)."""
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        tools=tools,
+        reasoning_effort="high",
+        extra_body={"thinking": {"type": "enabled"}},
+        stream=False,
+    )
+    err = getattr(response, "error", None)
+    if err is not None:
+        message = getattr(err, "message", None) or str(err)
+        raise RuntimeError(f"DeepSeek chat error payload: {message}")
+
+    choice = (getattr(response, "choices", None) or [None])[0]
+    if choice is None:
+        raise RuntimeError("DeepSeek chat returned no choices.")
+
+    finish_reason = getattr(choice, "finish_reason", None)
+    if finish_reason in {"content_filter", "aborted", "insufficient_system_resource"}:
+        raise RuntimeError(f"DeepSeek chat stopped early (finish_reason={finish_reason!r}).")
+
+    message = choice.message
+    content = (getattr(message, "content", None) or "").strip()
+    if not content:
+        raise RuntimeError(
+            f"DeepSeek chat returned empty text (finish_reason={finish_reason!r})."
+        )
+    usage = _deepseek_usage_dict(getattr(response, "usage", None), prompt_style=True)
+    return message, content, usage
+
+
+def _deepseek_extract_subject_url(user_prompt: str) -> str:
+    """Best-effort Subject PDP URL extraction for a focused first turn."""
+    import re
+
+    match = re.search(
+        r"Subject PDP URL:\s*(\S+)",
+        user_prompt or "",
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return match.group(1).strip().rstrip(")>\"'")
+    match = re.search(r"https?://\S+", user_prompt or "")
+    return match.group(0).rstrip(")>\"'") if match else ""
+
+
+def _deepseek_call_until_tools_or_report(
+    client: Any,
+    *,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    usage_total: dict[str, int],
+) -> tuple[str, Any, dict[str, int]]:
+    """Send a prompt; if DeepSeek returns a plan stub, force-continue once."""
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    message, content, usage = _deepseek_chat_create(
+        client,
+        model=model,
+        messages=messages,
+        tools=DEEPSEEK_WEB_TOOLS,
+    )
+    usage_total = _deepseek_add_usage(usage_total, usage)
+
+    if not _deepseek_report_incomplete(content):
+        return content, message, usage_total
+
+    if _deepseek_server_tool_steps(message) == 0 and (
+        _deepseek_looks_like_plan_stub(content) or len(content) < 500
+    ):
+        messages.append(_deepseek_message_to_dict(message))
+        messages.append({"role": "user", "content": DEEPSEEK_FORCE_NUDGE})
+        message2, content2, usage2 = _deepseek_chat_create(
+            client,
+            model=model,
+            messages=messages,
+            tools=DEEPSEEK_WEB_TOOLS,
+        )
+        usage_total = _deepseek_add_usage(usage_total, usage2)
+        return content2, message2, usage_total
+
+    return content, message, usage_total
+
+
+def _deepseek_chat_with_recovery(
+    client: Any,
+    *,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+) -> tuple[str, dict[str, int]]:
+    """Research-first chat with stub continuation; then expand to full report."""
+    usage_total = {
         "input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
         "cached_input_tokens": 0,
     }
+    subject_url = _deepseek_extract_subject_url(user_prompt)
+    url_line = subject_url or "the Subject PDP URL in the task"
 
-    # 1) Responses API (streaming) — preferred path for server web tools.
-    try:
-        content, usage_dict = _deepseek_responses(
-            client,
-            model=model,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            tools=tools,
-        )
-        if not _deepseek_report_incomplete(content):
-            return content, usage_dict
-        # Incomplete stub (e.g. "I'll start researching…") — one forced retry.
-        content, usage_dict = _deepseek_responses(
-            client,
-            model=model,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt + continue_nudge,
-            tools=tools,
-        )
-        if not _deepseek_report_incomplete(content):
-            return content, usage_dict
-        last_error = RuntimeError(
-            "DeepSeek Responses API stopped before producing a full report "
-            f"({len(content)} chars)."
-        )
-    except Exception as exc:
-        last_error = exc
-
-    # 2) Chat Completions with the same tools + thinking (not a tool-less fallback).
-    try:
-        content, usage_dict = _deepseek_chat(
-            client,
-            model=model,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt + continue_nudge,
-            tools=tools,
-        )
-        if not _deepseek_report_incomplete(content):
-            return content, usage_dict
-        raise RuntimeError(
-            "DeepSeek stopped before producing a full report "
-            f"({len(content)} chars). Try running again."
-        )
-    except Exception as exc:
-        detail = f" Responses error: {last_error}" if last_error else ""
-        raise RuntimeError(
-            f"DeepSeek failed to generate a complete PDP report.{detail} Chat error: {exc}"
-        ) from exc
-
-
-def _deepseek_responses(
-    client: Any,
-    *,
-    model: str,
-    system_prompt: str,
-    user_prompt: str,
-    tools: list[dict[str, Any]],
-) -> tuple[str, dict[str, int]]:
-    """Stream a DeepSeek Responses call and return final text + usage."""
-    stream = client.responses.create(
-        model=model,
-        instructions=system_prompt,
-        input=user_prompt,
-        reasoning={"effort": "high"},
-        tools=tools,
-        max_output_tokens=65536,
-        stream=True,
+    # DeepSeek often ignores huge one-shot "write everything" prompts and returns
+    # a plan stub. A focused research-first turn + force-continue is reliable.
+    # Keep this first-turn prompt short. Long one-shot task dumps often make
+    # DeepSeek return a plan stub with thinking/tools skipped.
+    research_prompt = (
+        f"Subject PDP URL: {url_line}\n\n"
+        "Use `deepseek_read_url` and `deepseek_web_search` NOW (do not announce a plan).\n"
+        "Follow the system skill rules for source authority and verification.\n"
+        "Return at least:\n"
+        "## 1. Issues to fix (Page Defects)\n"
+        "## 2. Research Summary\n\n"
+        "Research Summary must include verified product identity, key specs, "
+        "competitor notes when found, and source URLs."
     )
+    _ = user_prompt  # retained for signature compatibility / future turn context
 
-    final = None
-    for event in stream:
-        event_type = getattr(event, "type", None)
-        if event_type in ("response.completed", "response.incomplete", "response.failed"):
-            final = getattr(event, "response", None)
-
-    if final is None:
-        raise RuntimeError("DeepSeek Responses stream ended without a final response.")
-
-    status = getattr(final, "status", None)
-    if status == "failed":
-        err = getattr(final, "error", None)
-        message = getattr(err, "message", None) if err is not None else None
-        raise RuntimeError(message or "DeepSeek Responses API failed.")
-    if status == "incomplete":
-        details = getattr(final, "incomplete_details", None)
-        reason = getattr(details, "reason", None) if details is not None else None
-        # Still try to use partial text below; caller may retry if incomplete.
-        if reason == "content_filter":
-            raise RuntimeError("DeepSeek response was blocked by content filter.")
-
-    content = (getattr(final, "output_text", None) or "").strip()
-    if not content:
-        # Some SDK builds leave output_text empty; assemble message parts manually.
-        parts: list[str] = []
-        for item in getattr(final, "output", None) or []:
-            if getattr(item, "type", None) != "message":
-                continue
-            for part in getattr(item, "content", None) or []:
-                if getattr(part, "type", None) == "output_text" and getattr(part, "text", None):
-                    parts.append(part.text)
-        content = "\n".join(parts).strip()
-
-    if not content:
-        raise RuntimeError(
-            f"DeepSeek Responses API returned empty text (status={status!r})."
+    last_content = ""
+    for _attempt in range(2):
+        content, message, usage_total = _deepseek_call_until_tools_or_report(
+            client,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=research_prompt,
+            usage_total=usage_total,
         )
-    return content, _deepseek_usage_dict(getattr(final, "usage", None))
+        last_content = content
+        if not _deepseek_report_incomplete(content):
+            # Already a full report (force-continue sometimes writes everything).
+            return content, usage_total
+
+        # If we have real research text, ask for the remaining deliverable sections.
+        if _deepseek_research_useful(content):
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": research_prompt},
+                _deepseek_message_to_dict(message),
+                {
+                    "role": "user",
+                    "content": (
+                        "Using the research already gathered (including any page/search "
+                        "results in context), produce the COMPLETE deliverable with ALL "
+                        "sections now:\n"
+                        "## 1. Issues to fix (Page Defects)\n"
+                        "## 2. Research Summary\n"
+                        "## 3. Gap Validation Table\n"
+                        "## 4. Excluded Content Gaps\n"
+                        "## 5. Final WYSIWYG PDP Copy\n"
+                        "## 6. HTML PDP Copy\n"
+                        "## 7. JSON-LD Schema\n"
+                        "## 8. Sources\n"
+                        "You may use tools again if needed. Do not reply with a plan only."
+                    ),
+                },
+            ]
+            # Replies that already used web tools must be passed back unchanged.
+            _msg2, content2, usage2 = _deepseek_chat_create(
+                client,
+                model=model,
+                messages=messages,
+                tools=DEEPSEEK_WEB_TOOLS,
+            )
+            usage_total = _deepseek_add_usage(usage_total, usage2)
+            last_content = content2
+            if not _deepseek_report_incomplete(content2):
+                return content2, usage_total
+
+    return last_content, usage_total
 
 
-def _deepseek_chat(
-    client: Any,
+def _deepseek_anthropic_messages(
     *,
+    api_key: str,
     model: str,
     system_prompt: str,
     user_prompt: str,
-    tools: list[dict[str, Any]],
 ) -> tuple[str, dict[str, int]]:
-    """Chat Completions path with thinking + server web tools (streamed)."""
-    stream = client.chat.completions.create(
+    """DeepSeek Anthropic-compatible Messages API with thinking + web tools."""
+    import anthropic
+
+    client = anthropic.Anthropic(
+        api_key=api_key,
+        base_url="https://api.deepseek.com/anthropic",
+        timeout=1200.0,
+    )
+    response = client.messages.create(
         model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
         max_tokens=65536,
-        tools=tools,
-        reasoning_effort="high",
-        extra_body={"thinking": {"type": "enabled"}},
-        stream=True,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+        extra_body={
+            "thinking": {"type": "enabled"},
+            "tools": [
+                {"type": "deepseek_web_search", "name": "deepseek_web_search"},
+                {"type": "deepseek_read_url", "name": "deepseek_read_url"},
+            ],
+        },
     )
-
-    text_parts: list[str] = []
-    usage = None
-    finish_reason = None
-    saw_error = None
-
-    for chunk in stream:
-        # DeepSeek may end a failed stream with an error payload and empty choices.
-        err = getattr(chunk, "error", None)
-        if err is not None:
-            saw_error = err
-        if getattr(chunk, "usage", None) is not None:
-            usage = chunk.usage
-        choices = getattr(chunk, "choices", None) or []
-        if not choices:
-            continue
-        choice = choices[0]
-        finish_reason = getattr(choice, "finish_reason", None) or finish_reason
-        delta = getattr(choice, "delta", None)
-        piece = getattr(delta, "content", None) if delta is not None else None
-        if piece:
-            text_parts.append(piece)
-
-    if saw_error is not None:
-        message = getattr(saw_error, "message", None) or str(saw_error)
-        raise RuntimeError(f"DeepSeek chat stream error: {message}")
-
-    content = "".join(text_parts).strip()
+    parts: list[str] = []
+    for block in getattr(response, "content", None) or []:
+        # Skip thinking/tool blocks; keep visible text only.
+        if getattr(block, "type", None) == "text" and getattr(block, "text", None):
+            parts.append(block.text)
+    content = "\n".join(parts).strip()
     if not content:
         raise RuntimeError(
-            f"DeepSeek chat returned empty text (finish_reason={finish_reason!r})."
+            "DeepSeek Anthropic Messages API returned no text "
+            f"(stop_reason={getattr(response, 'stop_reason', None)!r})."
         )
-    if finish_reason == "content_filter":
-        raise RuntimeError("DeepSeek chat response was blocked by content filter.")
-    return content, _deepseek_usage_dict(usage, prompt_style=True)
+    return content, _deepseek_usage_dict(getattr(response, "usage", None))

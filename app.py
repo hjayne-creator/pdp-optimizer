@@ -4,6 +4,8 @@ from pathlib import Path
 import streamlit as st
 
 from llm import (
+    DEFAULT_MODEL,
+    DEFAULT_PROVIDER,
     MODELS,
     PRICING_SOURCES,
     PROVIDER_KEY_MAP,
@@ -380,17 +382,26 @@ def page_new_run() -> None:
 
     col_a, col_b = st.columns(2)
     with col_a:
+        provider_index = (
+            available.index(DEFAULT_PROVIDER) if DEFAULT_PROVIDER in available else 0
+        )
         provider = st.selectbox(
             "Provider",
             options=available,
-            help="Only providers with a saved API key are listed.",
+            index=provider_index,
+            help="Only providers with a saved API key are listed. Default: Anthropic.",
         )
     with col_b:
         options = model_options(provider)
+        model_index = (
+            options.index(DEFAULT_MODEL) if DEFAULT_MODEL in options else 0
+        )
         model = st.selectbox(
             "Model",
             options=options,
+            index=model_index,
             format_func=lambda m: format_model_option(provider, m),
+            help="Default: Claude Sonnet 5.5 when Anthropic is selected.",
         )
 
     selected = get_model(provider, model)
@@ -530,6 +541,70 @@ def page_pricing() -> None:
         "DeepSeek figures use peak cache-miss rates (off-peak is half)."
     )
     st.dataframe(pricing_rows(), use_container_width=True, hide_index=True)
+
+    st.subheader("FAQ: which model tier should I use?")
+    st.caption(
+        "This app needs long instruction-following, web research, strict sourcing, and a full "
+        "multi-section report. Pick a tier for that workload—not just the cheapest sticker price."
+    )
+
+    with st.expander("Best everyday default", expanded=True):
+        st.markdown(
+            f"""
+- **{DEFAULT_PROVIDER} · Claude Sonnet 5.5** (app default) — strongest everyday balance of
+  quality, instruction-following, and reliable full reports.
+- **OpenAI · GPT-6.1 Sol** — solid alternative with Responses + web search.
+- **OpenAI · GPT-6.1 Terra** — similar OpenAI path at a lower rate when Sol is more than you need.
+- **Google · Gemini 4 Hydrogen** — good when Google Search grounding helps and you want
+  thinking tokens included.
+            """.strip()
+        )
+
+    with st.expander("Best quality / hard PDPs"):
+        st.markdown(
+            """
+Use these when the product page is messy, competitors are ambiguous, or gap validation must be
+especially careful:
+
+- **Anthropic · Claude Opus 5.5** — top pick for careful agentic research on this skill.
+- **OpenAI · GPT-6 Astra** — highest OpenAI ceiling; expensive; use for the hardest runs.
+- **Google · Gemini 4 Carbon** — strongest Gemini reasoning / long synthesis.
+- **Google · Gemini 4 Argon** — same Gemini 4 class with usually fewer tokens per turn
+  (often better cost/latency than Carbon at the same list rate).
+            """.strip()
+        )
+
+    with st.expander("Fast / cheap (drafts & smoke tests)"):
+        st.markdown(
+            """
+Fine for quick drafts or checking the pipeline. Weaker for strict source-authority work:
+
+- **OpenAI · GPT-6 Luna** or **GPT-5.6 Luna**
+- **Google · Gemini 3.8 Flash** or **Gemini 3.5 Flash-Lite**
+- **Anthropic · Claude Haiku 5.5** — only when speed/cost matter more than depth
+            """.strip()
+        )
+
+    with st.expander("Experimental / optional"):
+        st.markdown(
+            """
+- **DeepSeek · V4.1 Flash** — cheap on paper, but often needs special recovery for this app
+  (plan stubs, skipped tools). Keep optional; do not use as the primary Optimize model.
+            """.strip()
+        )
+
+    with st.expander("Practical setup"):
+        st.markdown(
+            f"""
+1. Leave **{DEFAULT_PROVIDER} · Claude Sonnet 5.5** as the default for normal runs.
+2. Step up to **Opus 5.5**, **GPT-6 Astra**, or **Gemini 4 Carbon/Argon** for hard PDPs.
+3. Use Luna / Flash / Haiku only for drafts or smoke tests.
+4. Treat DeepSeek as experimental.
+
+Estimated cost on each completed run still depends on tokens used (research/tool context can
+dominate). Compare the pricing table above, then check the run cost metrics after Optimize.
+            """.strip()
+        )
 
     st.subheader("Official sources")
     for provider, url in PRICING_SOURCES.items():

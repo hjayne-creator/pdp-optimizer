@@ -1,0 +1,23 @@
+{
+  "finish_reason": "stop",
+  "content": "I'll start by reading the subject PDP and researching the product.",
+  "reasoning_content": "",
+  "server_tool_calls": [],
+  "usage": {
+    "completion_tokens": 23,
+    "prompt_tokens": 9278,
+    "total_tokens": 9301,
+    "completion_tokens_details": {
+      "accepted_prediction_tokens": null,
+      "audio_tokens": null,
+      "reasoning_tokens": 0,
+      "rejected_prediction_tokens": null
+    },
+    "prompt_tokens_details": {
+      "audio_tokens": null,
+      "cached_tokens": 7680
+    },
+    "prompt_cache_hit_tokens": 7680,
+    "prompt_cache_miss_tokens": 1598
+  }
+}
