@@ -553,6 +553,43 @@ def _generate_google(
     }
 
 
+def _deepseek_usage_dict(usage: Any, *, prompt_style: bool = False) -> dict[str, int]:
+    """Normalize DeepSeek Responses or Chat Completions usage into shared keys."""
+    if usage is None:
+        return {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cached_input_tokens": 0,
+        }
+    if prompt_style:
+        input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        details = getattr(usage, "prompt_tokens_details", None)
+    else:
+        input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        details = getattr(usage, "input_tokens_details", None)
+    total_tokens = int(getattr(usage, "total_tokens", 0) or (input_tokens + output_tokens))
+    cached = int(getattr(details, "cached_tokens", 0) or 0) if details is not None else 0
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "cached_input_tokens": cached,
+    }
+
+
+def _deepseek_report_incomplete(content: str) -> bool:
+    """True when the model stopped before producing the expected PDP deliverable."""
+    text = (content or "").strip()
+    if len(text) < 500:
+        return True
+    if "##" not in text and "Issues to fix" not in text:
+        return True
+    return False
+
+
 def _generate_deepseek(
     model: str,
     api_key: str,
@@ -560,84 +597,206 @@ def _generate_deepseek(
     user_prompt: str,
     _temperature: float,
 ) -> tuple[str, dict[str, int]]:
-    """Call DeepSeek via OpenAI-compatible Responses API with thinking enabled.
+    """Call DeepSeek with thinking + server web tools enabled.
 
     Temperature is unused: thinking mode ignores sampling params.
+    Deep thinking search can take a long time; we stream and use a long timeout
+    so keep-alives are handled instead of returning a premature stub reply.
     """
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+    # Deep research with tools regularly exceeds default HTTP timeouts.
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.deepseek.com",
+        timeout=1200.0,
+    )
+    # With thinking on, deepseek_web_search runs deep thinking search (search +
+    # open/find in pages). deepseek_read_url is ignored for user links while
+    # search is declared, but keep both so non-thinking retries can still read URLs.
     tools = [
         {"type": "deepseek_web_search"},
         {"type": "deepseek_read_url"},
     ]
+    continue_nudge = (
+        "\n\nContinue now and produce the COMPLETE deliverable in one response: "
+        "all required markdown sections (Issues to fix, Research Summary, Gap "
+        "Validation Table, Excluded Content Gaps, Final WYSIWYG PDP Copy, HTML "
+        "PDP Copy, JSON-LD Schema, Sources). Do not stop after announcing that "
+        "you will research — finish the full report."
+    )
 
-    # Prefer Responses API with server-side web tools + explicit thinking.
+    last_error: Exception | None = None
+    content = ""
+    usage_dict: dict[str, int] = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cached_input_tokens": 0,
+    }
+
+    # 1) Responses API (streaming) — preferred path for server web tools.
     try:
-        response = client.responses.create(
+        content, usage_dict = _deepseek_responses(
+            client,
             model=model,
-            instructions=system_prompt,
-            input=user_prompt,
-            reasoning={"effort": "high"},
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             tools=tools,
-            max_output_tokens=65536,
         )
-        content = (getattr(response, "output_text", None) or "").strip()
-        if not content:
-            raise RuntimeError("DeepSeek Responses API returned an empty response.")
-
-        usage = getattr(response, "usage", None)
-        input_tokens = int(getattr(usage, "input_tokens", 0) or 0) if usage else 0
-        output_tokens = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
-        total_tokens = (
-            int(getattr(usage, "total_tokens", 0) or (input_tokens + output_tokens))
-            if usage
-            else 0
+        if not _deepseek_report_incomplete(content):
+            return content, usage_dict
+        # Incomplete stub (e.g. "I'll start researching…") — one forced retry.
+        content, usage_dict = _deepseek_responses(
+            client,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt + continue_nudge,
+            tools=tools,
         )
-        cached = 0
-        details = getattr(usage, "input_tokens_details", None) if usage else None
-        if details is not None:
-            cached = int(getattr(details, "cached_tokens", 0) or 0)
-        return content, {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": total_tokens,
-            "cached_input_tokens": cached,
-        }
-    except Exception:
-        # Fall back to chat completions if Responses/web tools are unavailable.
-        pass
+        if not _deepseek_report_incomplete(content):
+            return content, usage_dict
+        last_error = RuntimeError(
+            "DeepSeek Responses API stopped before producing a full report "
+            f"({len(content)} chars)."
+        )
+    except Exception as exc:
+        last_error = exc
 
-    response = client.chat.completions.create(
+    # 2) Chat Completions with the same tools + thinking (not a tool-less fallback).
+    try:
+        content, usage_dict = _deepseek_chat(
+            client,
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt + continue_nudge,
+            tools=tools,
+        )
+        if not _deepseek_report_incomplete(content):
+            return content, usage_dict
+        raise RuntimeError(
+            "DeepSeek stopped before producing a full report "
+            f"({len(content)} chars). Try running again."
+        )
+    except Exception as exc:
+        detail = f" Responses error: {last_error}" if last_error else ""
+        raise RuntimeError(
+            f"DeepSeek failed to generate a complete PDP report.{detail} Chat error: {exc}"
+        ) from exc
+
+
+def _deepseek_responses(
+    client: Any,
+    *,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    tools: list[dict[str, Any]],
+) -> tuple[str, dict[str, int]]:
+    """Stream a DeepSeek Responses call and return final text + usage."""
+    stream = client.responses.create(
+        model=model,
+        instructions=system_prompt,
+        input=user_prompt,
+        reasoning={"effort": "high"},
+        tools=tools,
+        max_output_tokens=65536,
+        stream=True,
+    )
+
+    final = None
+    for event in stream:
+        event_type = getattr(event, "type", None)
+        if event_type in ("response.completed", "response.incomplete", "response.failed"):
+            final = getattr(event, "response", None)
+
+    if final is None:
+        raise RuntimeError("DeepSeek Responses stream ended without a final response.")
+
+    status = getattr(final, "status", None)
+    if status == "failed":
+        err = getattr(final, "error", None)
+        message = getattr(err, "message", None) if err is not None else None
+        raise RuntimeError(message or "DeepSeek Responses API failed.")
+    if status == "incomplete":
+        details = getattr(final, "incomplete_details", None)
+        reason = getattr(details, "reason", None) if details is not None else None
+        # Still try to use partial text below; caller may retry if incomplete.
+        if reason == "content_filter":
+            raise RuntimeError("DeepSeek response was blocked by content filter.")
+
+    content = (getattr(final, "output_text", None) or "").strip()
+    if not content:
+        # Some SDK builds leave output_text empty; assemble message parts manually.
+        parts: list[str] = []
+        for item in getattr(final, "output", None) or []:
+            if getattr(item, "type", None) != "message":
+                continue
+            for part in getattr(item, "content", None) or []:
+                if getattr(part, "type", None) == "output_text" and getattr(part, "text", None):
+                    parts.append(part.text)
+        content = "\n".join(parts).strip()
+
+    if not content:
+        raise RuntimeError(
+            f"DeepSeek Responses API returned empty text (status={status!r})."
+        )
+    return content, _deepseek_usage_dict(getattr(final, "usage", None))
+
+
+def _deepseek_chat(
+    client: Any,
+    *,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    tools: list[dict[str, Any]],
+) -> tuple[str, dict[str, int]]:
+    """Chat Completions path with thinking + server web tools (streamed)."""
+    stream = client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         max_tokens=65536,
+        tools=tools,
         reasoning_effort="high",
         extra_body={"thinking": {"type": "enabled"}},
+        stream=True,
     )
-    message = response.choices[0].message
-    content = (getattr(message, "content", None) or "").strip()
-    if not content:
-        raise RuntimeError("DeepSeek returned an empty response.")
 
-    usage = response.usage
-    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
-    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0) if usage else 0
-    total_tokens = (
-        int(getattr(usage, "total_tokens", 0) or (input_tokens + output_tokens))
-        if usage
-        else 0
-    )
-    cached = 0
-    details = getattr(usage, "prompt_tokens_details", None) if usage else None
-    if details is not None:
-        cached = int(getattr(details, "cached_tokens", 0) or 0)
-    return content, {
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "total_tokens": total_tokens,
-        "cached_input_tokens": cached,
-    }
+    text_parts: list[str] = []
+    usage = None
+    finish_reason = None
+    saw_error = None
+
+    for chunk in stream:
+        # DeepSeek may end a failed stream with an error payload and empty choices.
+        err = getattr(chunk, "error", None)
+        if err is not None:
+            saw_error = err
+        if getattr(chunk, "usage", None) is not None:
+            usage = chunk.usage
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+        choice = choices[0]
+        finish_reason = getattr(choice, "finish_reason", None) or finish_reason
+        delta = getattr(choice, "delta", None)
+        piece = getattr(delta, "content", None) if delta is not None else None
+        if piece:
+            text_parts.append(piece)
+
+    if saw_error is not None:
+        message = getattr(saw_error, "message", None) or str(saw_error)
+        raise RuntimeError(f"DeepSeek chat stream error: {message}")
+
+    content = "".join(text_parts).strip()
+    if not content:
+        raise RuntimeError(
+            f"DeepSeek chat returned empty text (finish_reason={finish_reason!r})."
+        )
+    if finish_reason == "content_filter":
+        raise RuntimeError("DeepSeek chat response was blocked by content filter.")
+    return content, _deepseek_usage_dict(usage, prompt_style=True)
