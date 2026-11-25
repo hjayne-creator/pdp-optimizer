@@ -1,4 +1,4 @@
-"""Multi-provider LLM helpers for OpenAI, Anthropic, and Google Gemini."""
+"""Multi-provider LLM helpers for OpenAI, Anthropic, Google Gemini, and DeepSeek."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import Any
 # - OpenAI: https://developers.openai.com/api/docs/pricing
 # - Anthropic: https://platform.claude.com/docs/en/models/overview
 # - Google: https://aistudio.google.com/docs/pricing
+# - DeepSeek: https://api-docs.deepseek.com/quick_start/pricing/
 MODELS: dict[str, list[dict[str, Any]]] = {
     "OpenAI": [
         {
@@ -100,18 +101,32 @@ MODELS: dict[str, list[dict[str, Any]]] = {
             "notes": "Paid tier; output includes thinking tokens",
         },
     ],
+    "DeepSeek": [
+        {
+            "id": "deepseek-flash",
+            "label": "DeepSeek V4.1 Flash",
+            "input_per_mtok": 0.30,
+            "output_per_mtok": 1.20,
+            "notes": (
+                "DeepSeek-V4.1-Flash-1017; peak cache-miss rates "
+                "(off-peak half); thinking on by default; output includes reasoning tokens"
+            ),
+        },
+    ],
 }
 
 PRICING_SOURCES = {
     "OpenAI": "https://developers.openai.com/api/docs/pricing",
     "Anthropic": "https://platform.claude.com/docs/en/models/overview",
     "Google": "https://aistudio.google.com/docs/pricing",
+    "DeepSeek": "https://api-docs.deepseek.com/quick_start/pricing/",
 }
 
 PROVIDER_KEY_MAP = {
     "OpenAI": "openai",
     "Anthropic": "anthropic",
     "Google": "google",
+    "DeepSeek": "deepseek",
 }
 
 
@@ -201,6 +216,8 @@ def generate(
         content, usage = _generate_anthropic(model, api_key, system_prompt, user_prompt, temperature)
     elif provider == "Google":
         content, usage = _generate_google(model, api_key, system_prompt, user_prompt, temperature)
+    elif provider == "DeepSeek":
+        content, usage = _generate_deepseek(model, api_key, system_prompt, user_prompt, temperature)
     else:
         raise ValueError(f"Unsupported provider: {provider}")
 
@@ -528,6 +545,96 @@ def _generate_google(
     output_tokens += thoughts
     total_tokens = int(getattr(meta, "total_token_count", 0) or (input_tokens + output_tokens)) if meta else 0
     cached = int(getattr(meta, "cached_content_token_count", 0) or 0) if meta else 0
+    return content, {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "cached_input_tokens": cached,
+    }
+
+
+def _generate_deepseek(
+    model: str,
+    api_key: str,
+    system_prompt: str,
+    user_prompt: str,
+    _temperature: float,
+) -> tuple[str, dict[str, int]]:
+    """Call DeepSeek via OpenAI-compatible Responses API with thinking enabled.
+
+    Temperature is unused: thinking mode ignores sampling params.
+    """
+    from openai import OpenAI
+
+    client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+    tools = [
+        {"type": "deepseek_web_search"},
+        {"type": "deepseek_read_url"},
+    ]
+
+    # Prefer Responses API with server-side web tools + explicit thinking.
+    try:
+        response = client.responses.create(
+            model=model,
+            instructions=system_prompt,
+            input=user_prompt,
+            reasoning={"effort": "high"},
+            tools=tools,
+            max_output_tokens=65536,
+        )
+        content = (getattr(response, "output_text", None) or "").strip()
+        if not content:
+            raise RuntimeError("DeepSeek Responses API returned an empty response.")
+
+        usage = getattr(response, "usage", None)
+        input_tokens = int(getattr(usage, "input_tokens", 0) or 0) if usage else 0
+        output_tokens = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
+        total_tokens = (
+            int(getattr(usage, "total_tokens", 0) or (input_tokens + output_tokens))
+            if usage
+            else 0
+        )
+        cached = 0
+        details = getattr(usage, "input_tokens_details", None) if usage else None
+        if details is not None:
+            cached = int(getattr(details, "cached_tokens", 0) or 0)
+        return content, {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "cached_input_tokens": cached,
+        }
+    except Exception:
+        # Fall back to chat completions if Responses/web tools are unavailable.
+        pass
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_tokens=65536,
+        reasoning_effort="high",
+        extra_body={"thinking": {"type": "enabled"}},
+    )
+    message = response.choices[0].message
+    content = (getattr(message, "content", None) or "").strip()
+    if not content:
+        raise RuntimeError("DeepSeek returned an empty response.")
+
+    usage = response.usage
+    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
+    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0) if usage else 0
+    total_tokens = (
+        int(getattr(usage, "total_tokens", 0) or (input_tokens + output_tokens))
+        if usage
+        else 0
+    )
+    cached = 0
+    details = getattr(usage, "prompt_tokens_details", None) if usage else None
+    if details is not None:
+        cached = int(getattr(details, "cached_tokens", 0) or 0)
     return content, {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,

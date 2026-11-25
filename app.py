@@ -311,8 +311,9 @@ def page_api_keys() -> None:
     st.header("API Keys")
     st.caption(
         "Precedence: values saved here (local file) → environment variables → Streamlit secrets. "
-        "For a shared deploy, set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and "
-        "`GOOGLE_API_KEY` (or `GEMINI_API_KEY`) in the host env / Streamlit secrets so every teammate gets them."
+        "For a shared deploy, set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, "
+        "`GOOGLE_API_KEY` (or `GEMINI_API_KEY`), and `DEEPSEEK_API_KEY` in the host env / "
+        "Streamlit secrets so every teammate gets them."
     )
 
     saved = load_api_keys()
@@ -335,6 +336,12 @@ def page_api_keys() -> None:
             type="password",
             help="Used for Gemini models. Env: GOOGLE_API_KEY or GEMINI_API_KEY",
         )
+        deepseek_key = st.text_input(
+            "DeepSeek API Key",
+            value=saved.get("deepseek", ""),
+            type="password",
+            help="Used for DeepSeek models. Env: DEEPSEEK_API_KEY",
+        )
         submitted = st.form_submit_button("Save keys", type="primary")
 
     if submitted:
@@ -342,15 +349,17 @@ def page_api_keys() -> None:
             "openai": openai_key,
             "anthropic": anthropic_key,
             "google": google_key,
+            "deepseek": deepseek_key,
         })
         st.success("API keys saved locally for this machine.")
 
     status = load_api_keys()
-    cols = st.columns(3)
+    cols = st.columns(4)
     for col, (label, field) in zip(cols, [
         ("OpenAI", "openai"),
         ("Anthropic", "anthropic"),
         ("Google", "google"),
+        ("DeepSeek", "deepseek"),
     ]):
         with col:
             if status.get(field):
@@ -517,7 +526,8 @@ def page_pricing() -> None:
     st.header("Model Pricing")
     st.caption(
         "USD per 1M tokens for models available in this app. "
-        "OpenAI figures use Standard short-context rates; Google figures use paid-tier rates."
+        "OpenAI figures use Standard short-context rates; Google figures use paid-tier rates; "
+        "DeepSeek figures use peak cache-miss rates (off-peak is half)."
     )
     st.dataframe(pricing_rows(), use_container_width=True, hide_index=True)
 
@@ -599,7 +609,7 @@ with st.sidebar:
     st.divider()
     keys = load_api_keys()
     configured = sum(1 for v in keys.values() if v)
-    st.caption(f"API keys configured: {configured}/3")
+    st.caption(f"API keys configured: {configured}/4")
     st.caption(f"Saved reports: {len(list_reports())}")
     st.caption(f"Models available: {sum(len(v) for v in MODELS.values())}")
 

@@ -15,13 +15,14 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 KEYS_PATH = DATA_DIR / "api_keys.json"
 REPORTS_DIR = DATA_DIR / "reports"
 
-KEY_FIELDS = ("openai", "anthropic", "google")
+KEY_FIELDS = ("openai", "anthropic", "google", "deepseek")
 
 # Env var names checked in order for each provider.
 ENV_KEY_MAP: dict[str, tuple[str, ...]] = {
     "openai": ("OPENAI_API_KEY",),
     "anthropic": ("ANTHROPIC_API_KEY",),
     "google": ("GOOGLE_API_KEY", "GOOGLE_AI_API_KEY", "GEMINI_API_KEY"),
+    "deepseek": ("DEEPSEEK_API_KEY",),
 }
 
 
